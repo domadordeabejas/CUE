@@ -1,0 +1,94 @@
+/* Bootstrap 5 y Bootstrap Icons */
+@import 'bootstrap/dist/css/bootstrap.min.css';
+@import 'bootstrap-icons/font/bootstrap-icons.css';
+
+:root {
+	--cue-primary: #1b5e20;
+	--cue-primary-hover: #144919;
+	--cue-secondary: #2e7d32;
+	--cue-accent: #f9a825;
+	--cue-dark: #1f2937;
+	--cue-border-color: #e5e7eb;
+	--cue-surface: #ffffff;
+	--cue-bg: #f8fafc;
+	--cue-danger: #dc2626;
+	--cue-success: #16a34a;
+	--cue-warning: #ea580c;
+}
+
+body {
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+	background-color: var(--cue-bg);
+	color: var(--cue-dark);
+	-webkit-font-smoothing: antialiased;
+	min-height: 100vh;
+}
+
+/* Touch targets para Mobile-First */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	font-weight: 500;
+	padding: 0.6rem 1.1rem;
+	border-radius: 0.5rem;
+	transition: all 0.15s ease-in-out;
+}
+
+.btn-primary {
+	background-color: var(--cue-primary);
+	border-color: var(--cue-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+	background-color: var(--cue-primary-hover) !important;
+	border-color: var(--cue-primary-hover) !important;
+}
+
+/* Formularios Mobile-First */
+.form-control, .form-select {
+	padding: 0.65rem 0.9rem;
+	border-radius: 0.5rem;
+	border: 1px solid #cbd5e1;
+	font-size: 0.95rem;
+}
+
+.form-control:focus, .form-select:focus {
+	border-color: var(--cue-primary);
+	box-shadow: 0 0 0 0.25rem rgba(27, 94, 32, 0.15);
+}
+
+/* Tarjetas y Contenedores */
+.cue-card {
+	background: #ffffff;
+	border: 1px solid var(--cue-border-color);
+	border-radius: 0.75rem;
+	box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+	transition: box-shadow 0.2s ease;
+}
+
+.cue-card:hover {
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+}
+
+/* Navegación activa */
+.nav-pills .nav-link.active {
+	background-color: var(--cue-primary);
+}
+
+/* Consola SQL y Código */
+.sql-console {
+	font-family: 'Fira Code', 'Courier New', Courier, monospace;
+	font-size: 0.88rem;
+	background-color: #0f172a;
+	color: #38bdf8;
+	border-radius: 0.5rem;
+	line-height: 1.5;
+}
+
+.sql-result-table {
+	font-size: 0.85rem;
+}

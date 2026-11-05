@@ -1,0 +1,36 @@
+# Dependencias
+node_modules/
+
+# Compilación y Salidas de SvelteKit
+.svelte-kit/
+build/
+dist/
+
+# Entornos y Secretos
+.env
+.env.*
+!.env.example
+
+# Base de datos SQLite temporal y local (se auto-genera con datos demo al arrancar)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Sistema Operativo y Editores
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

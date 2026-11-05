@@ -1,0 +1,35 @@
+{
+  "name": "cue-saas",
+  "version": "1.0.0",
+  "description": "Plataforma SaaS Multi-tenant para el Cuaderno Digital de Explotación Agrícola (CUE)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "cue",
+    "agricultura",
+    "svelte5",
+    "sveltekit",
+    "bootstrap5",
+    "multi-tenant",
+    "sigpac",
+    "ropo",
+    "roma"
+  ],
+  "author": "Antigravity Senior Fullstack Architect",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "bootstrap": "^5.3.3",
+    "bootstrap-icons": "^1.11.3",
+    "pg": "^8.13.3",
+    "svelte": "^5.57.3",
+    "vite": "^5.4.21"
+  }
+}
