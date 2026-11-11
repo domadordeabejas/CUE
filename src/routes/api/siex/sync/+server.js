@@ -40,7 +40,7 @@ export async function POST({ request, locals }) {
 
 	try {
 		const environment = body.environment || 'SANDBOX';
-		const receipt = dispatchToSiex(farmerId, { environment });
+		const receipt = await dispatchToSiex(farmerId, { environment });
 		return json({
 			success: true,
 			message: 'Cuaderno CUE transmitido e inscrito telemáticamente en el Registro de SIEX / FEGA.',

@@ -11,13 +11,63 @@
 	import SqlRunnerManager from '$lib/components/admin/SqlRunnerManager.svelte';
 	import DatabaseGenerator from '$lib/components/admin/DatabaseGenerator.svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { subscribeToRealtimeTables } from '$lib/supabase.js';
 
 	let { data } = $props();
 
 	// Tab activa sincronizada con la URL y la barra lateral
 	let activeTab = $derived(page.url.searchParams.get('tab') || 'users');
 	let consoleInitialSql = $state('');
+	let farmersList = $state([]);
+	let usersList = $state([]);
+
+	$effect(() => {
+		farmersList = [...(data.farmers || [])];
+		usersList = [...(data.users || [])];
+	});
+
+	// Suscripción en tiempo real a cambios de administración en Supabase
+	$effect(() => {
+		let refreshTimer = null;
+		const scheduleRefresh = () => {
+			if (refreshTimer) clearTimeout(refreshTimer);
+			refreshTimer = setTimeout(() => invalidateAll(), 250);
+		};
+
+		const unsubscribe = subscribeToRealtimeTables(
+			['farmers', 'users', 'config_database', 'config_api_endpoints', 'sql_execution_logs'],
+			(payload) => {
+				if (payload.table === 'farmers') {
+					if (payload.eventType === 'INSERT' && payload.new && !farmersList.some(f => f.id === payload.new.id)) {
+						farmersList = [...farmersList, payload.new];
+					} else if (payload.eventType === 'UPDATE' && payload.new) {
+						farmersList = farmersList.map(f => f.id === payload.new.id ? { ...f, ...payload.new } : f);
+					} else if (payload.eventType === 'DELETE' && payload.old?.id) {
+						farmersList = farmersList.filter(f => f.id !== payload.old.id);
+					}
+					return;
+				}
+				if (payload.table === 'users') {
+					if (payload.eventType === 'INSERT' && payload.new && !usersList.some(u => u.id === payload.new.id)) {
+						usersList = [...usersList, payload.new];
+					} else if (payload.eventType === 'UPDATE' && payload.new) {
+						usersList = usersList.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u);
+					} else if (payload.eventType === 'DELETE' && payload.old?.id) {
+						usersList = usersList.filter(u => u.id !== payload.old.id);
+					}
+					return;
+				}
+				scheduleRefresh();
+			},
+			'realtime_cue_admin'
+		);
+
+		return () => {
+			if (refreshTimer) clearTimeout(refreshTimer);
+			unsubscribe();
+		};
+	});
 
 	function switchTab(tab) {
 		goto(`?tab=${tab}`, { replaceState: false, keepFocus: true });
@@ -74,7 +124,7 @@
 			>
 				<div class="small text-muted mb-1 w-100">Explotaciones (Tenants)</div>
 				<div class="d-flex align-items-baseline gap-2">
-					<h3 class="fw-bold mb-0 text-dark">{data.farmers.length}</h3>
+					<h3 class="fw-bold mb-0 text-dark">{farmersList.length}</h3>
 					<span class="badge bg-success-subtle text-success small">Aisladas</span>
 				</div>
 			</button>
@@ -87,7 +137,7 @@
 			>
 				<div class="small text-muted mb-1 w-100">Usuarios Registrados</div>
 				<div class="d-flex align-items-baseline gap-2">
-					<h3 class="fw-bold mb-0 text-dark">{data.users.length}</h3>
+					<h3 class="fw-bold mb-0 text-dark">{usersList.length}</h3>
 					<span class="badge bg-primary-subtle text-primary small">Activos</span>
 				</div>
 			</button>
@@ -164,8 +214,8 @@
 		{#if activeTab === 'users'}
 			<div class="fade show">
 				<UserManager
-					initialFarmers={data.farmers}
-					initialUsers={data.users}
+					initialFarmers={farmersList}
+					initialUsers={usersList}
 				/>
 			</div>
 		{:else if activeTab === 'sql'}

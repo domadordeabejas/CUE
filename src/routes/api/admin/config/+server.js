@@ -26,7 +26,7 @@ export async function POST({ request }) {
 		const { type, data } = payload;
 
 		if (type === 'DB_CONFIG') {
-			const updated = updateDbConfig(data);
+			const updated = await updateDbConfig(data);
 			return json({
 				success: true,
 				message: 'Configuración de conexión SQL actualizada con éxito.',
@@ -35,7 +35,7 @@ export async function POST({ request }) {
 		}
 
 		if (type === 'API_ENDPOINT') {
-			const updatedList = updateApiEndpoint(data);
+			const updatedList = await updateApiEndpoint(data);
 			return json({
 				success: true,
 				message: `Endpoint ${data.name || data.serviceId} actualizado correctamente.`,

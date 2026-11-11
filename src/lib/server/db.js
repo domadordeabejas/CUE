@@ -6,8 +6,21 @@
  */
 
 import { getDb, seedDatabase, resetProjectDatabase, getDatabaseStats, getSqlScriptByDialect } from './sqlite.js';
+import {
+	supabaseServer,
+	hydrateLocalFromSupabase,
+	replicateToSupabase,
+	syncLocalSnapshotToSupabase
+} from './supabase-client.js';
 
 export { getDb, seedDatabase, resetProjectDatabase, getDatabaseStats, getSqlScriptByDialect };
+
+/**
+ * Sincroniza datos desde Supabase hacia la caché local si Supabase está disponible
+ */
+export async function syncFromSupabase(force = false) {
+	return hydrateLocalFromSupabase(getDb(), force);
+}
 
 /**
  * Obtiene la configuración de BD del SuperAdmin desde la tabla config_database
@@ -47,27 +60,44 @@ export function getDbConfig() {
 }
 
 /**
- * Actualiza la configuración de BD en la tabla config_database
+ * Actualiza la configuración de BD en la tabla config_database y replica en Supabase
  * @param {Object} newConfig
  */
-export function updateDbConfig(newConfig) {
+export async function updateDbConfig(newConfig) {
 	const db = getDb();
 	const existing = db.prepare('SELECT id FROM config_database LIMIT 1;').get();
 
 	if (existing) {
+		const host = newConfig.host || 'db.xeqnlmfyvijdgclfhzgf.supabase.co';
+		const port = parseInt(newConfig.port || 5432);
+		const databaseName = newConfig.database || 'postgres';
+		const username = newConfig.user || 'postgres';
+		const sslEnabled = Boolean(newConfig.ssl);
+		const maxConnections = parseInt(newConfig.maxConnections || 20);
+
 		db.prepare(`
 			UPDATE config_database
 			SET host = ?, port = ?, database_name = ?, username = ?, ssl_enabled = ?, max_connections = ?
 			WHERE id = ?;
 		`).run(
-			newConfig.host || 'db.xeqnlmfyvijdgclfhzgf.supabase.co',
-			parseInt(newConfig.port || 5432),
-			newConfig.database || 'postgres',
-			newConfig.user || 'postgres',
-			newConfig.ssl ? 1 : 0,
-			parseInt(newConfig.maxConnections || 20),
+			host,
+			port,
+			databaseName,
+			username,
+			sslEnabled ? 1 : 0,
+			maxConnections,
 			existing.id
 		);
+
+		await replicateToSupabase('config_database', supabaseServer.from('config_database').update({
+			host,
+			port,
+			database_name: databaseName,
+			username,
+			ssl_enabled: sslEnabled,
+			max_connections: maxConnections,
+			updated_at: new Date().toISOString()
+		}).eq('id', existing.id));
 	}
 
 	return getDbConfig();
@@ -93,11 +123,16 @@ export function getApiEndpoints() {
 }
 
 /**
- * Actualiza o inserta un endpoint de API en la tabla config_api_endpoints
+ * Actualiza o inserta un endpoint de API en la tabla config_api_endpoints y replica en Supabase
  * @param {Object} endpoint
  */
-export function updateApiEndpoint(endpoint) {
+export async function updateApiEndpoint(endpoint) {
 	const db = getDb();
+	const authType = endpoint.authType || 'NONE';
+	const environment = endpoint.environment || 'PRODUCTION';
+	const timeoutMs = parseInt(endpoint.timeoutMs || 8000);
+	const isActive = Boolean(endpoint.isActive);
+
 	db.prepare(`
 		INSERT INTO config_api_endpoints (service_id, service_name, endpoint_url, auth_type, environment, timeout_ms, is_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -112,11 +147,22 @@ export function updateApiEndpoint(endpoint) {
 		endpoint.serviceId,
 		endpoint.name,
 		endpoint.url,
-		endpoint.authType || 'NONE',
-		endpoint.environment || 'PRODUCTION',
-		parseInt(endpoint.timeoutMs || 8000),
-		endpoint.isActive ? 1 : 0
+		authType,
+		environment,
+		timeoutMs,
+		isActive ? 1 : 0
 	);
+
+	await replicateToSupabase('config_api_endpoints', supabaseServer.from('config_api_endpoints').upsert([{
+		service_id: endpoint.serviceId,
+		service_name: endpoint.name,
+		endpoint_url: endpoint.url,
+		auth_type: authType,
+		environment,
+		timeout_ms: timeoutMs,
+		is_active: isActive,
+		updated_at: new Date().toISOString()
+	}], { onConflict: 'service_id' }));
 
 	return getApiEndpoints();
 }
@@ -177,6 +223,7 @@ export async function executeSqlScript(sqlScript, userContext = { email: 'admin@
 	} finally {
 		const executionTimeMs = Math.round(performance.now() - startTime);
 		const logId = 'log-' + Math.random().toString(36).substring(2, 9);
+		const executedAt = new Date().toISOString();
 
 		try {
 			db.prepare(`
@@ -191,8 +238,20 @@ export async function executeSqlScript(sqlScript, userContext = { email: 'admin@
 				errorMessage,
 				executionTimeMs,
 				userContext.email,
-				new Date().toISOString()
+				executedAt
 			);
+
+			await replicateToSupabase('sql_execution_logs', supabaseServer.from('sql_execution_logs').upsert([{
+				id: logId,
+				sqlScript: trimmed,
+				operationType,
+				status,
+				rowsAffected,
+				errorMessage,
+				executionTimeMs,
+				userEmail: userContext.email,
+				executedAt
+			}], { onConflict: 'id' }));
 		} catch (logErr) {
 			console.error('Error al guardar log SQL:', logErr.message);
 		}
@@ -244,7 +303,7 @@ export function getFarmerById(farmerId) {
  * Registra un nuevo Inquilino / Agricultor con su Explotación inicial
  * @param {Object} data
  */
-export function createFarmer(data) {
+export async function createFarmer(data) {
 	if (!data.nombre_titular || !data.cif_nif || !data.email_contacto) {
 		throw new Error('El nombre de la explotación, CIF/NIF y email son obligatorios.');
 	}
@@ -296,9 +355,38 @@ export function createFarmer(data) {
 		now
 	);
 
+	// Replicar farmer y explotación en Supabase ANTES de crear el usuario administrador (orden FK)
+	await replicateToSupabase('farmers', supabaseServer.from('farmers').upsert([{
+		id: newFarmerId,
+		nombre_titular: data.nombre_titular.trim(),
+		cif_nif: cleanCif,
+		email_contacto: data.email_contacto.toLowerCase().trim(),
+		telefono: data.telefono?.trim() || '',
+		direccion: data.direccion?.trim() || '',
+		codigo_postal: data.codigo_postal?.trim() || '',
+		municipio: data.municipio?.trim() || '',
+		provincia: data.provincia?.trim() || '',
+		estado: 'ACTIVO',
+		created_at: now,
+		updated_at: now
+	}]));
+
+	await replicateToSupabase('explotaciones', supabaseServer.from('explotaciones').upsert([{
+		id: newExplotacionId,
+		farmer_id: newFarmerId,
+		codigo_rea: reaCode,
+		nombre: data.nombre_explotacion?.trim() || `Explotación ${data.nombre_titular.trim()}`,
+		titular_nif: cleanCif,
+		municipio_sede: data.municipio?.trim() || 'España',
+		provincia_sede: data.provincia?.trim() || '',
+		tipo_explotacion: 'AGRICOLA_MIXTA',
+		created_at: now,
+		updated_at: now
+	}]));
+
 	// Crear usuario administrador si se proporciona
 	if (data.admin_nombre && data.admin_email) {
-		createUser({
+		await createUser({
 			farmer_id: newFarmerId,
 			nombre: data.admin_nombre,
 			apellidos: data.admin_apellidos || 'Titular',
@@ -317,7 +405,7 @@ export function createFarmer(data) {
  * @param {string} farmerId
  * @param {Object} data
  */
-export function updateFarmer(farmerId, data) {
+export async function updateFarmer(farmerId, data) {
 	const db = getDb();
 	const existing = getFarmerById(farmerId);
 	if (!existing) throw new Error('Agricultor no encontrado.');
@@ -333,6 +421,8 @@ export function updateFarmer(farmerId, data) {
 		estado: data.estado || existing.estado
 	};
 
+	const now = new Date().toISOString();
+
 	db.prepare(`
 		UPDATE farmers
 		SET nombre_titular = ?, email_contacto = ?, telefono = ?, direccion = ?, codigo_postal = ?, municipio = ?, provincia = ?, estado = ?, updated_at = ?
@@ -346,9 +436,15 @@ export function updateFarmer(farmerId, data) {
 		updated.municipio,
 		updated.provincia,
 		updated.estado,
-		new Date().toISOString(),
+		now,
 		farmerId
 	);
+
+	// Replicar en Supabase
+	await replicateToSupabase('updateFarmer', supabaseServer.from('farmers').update({
+		...updated,
+		updated_at: now
+	}).eq('id', farmerId));
 
 	return getFarmerById(farmerId);
 }
@@ -427,7 +523,7 @@ export function getUserByEmail(email) {
  * Crea un nuevo usuario en la base de datos
  * @param {Object} userData
  */
-export function createUser(userData) {
+export async function createUser(userData) {
 	if (!userData.nombre || !userData.email || !userData.rol) {
 		throw new Error('Nombre, email y rol son requeridos.');
 	}
@@ -463,6 +559,22 @@ export function createUser(userData) {
 		now
 	);
 
+	// Replicar en Supabase
+	await replicateToSupabase('users', supabaseServer.from('users').upsert([{
+		id: newUserId,
+		farmer_id: farmerId,
+		nombre: userData.nombre.trim(),
+		apellidos: userData.apellidos?.trim() || '',
+		email: emailClean,
+		password_hash: hash,
+		rol: userData.rol,
+		nif: userData.nif?.trim() || 'Sin NIF',
+		telefono: userData.telefono?.trim() || '',
+		is_active: Boolean(userData.is_active ?? 1),
+		created_at: now,
+		updated_at: now
+	}]));
+
 	return getUserById(newUserId);
 }
 
@@ -471,7 +583,7 @@ export function createUser(userData) {
  * @param {string} userId
  * @param {Object} data
  */
-export function updateUser(userId, data) {
+export async function updateUser(userId, data) {
 	const db = getDb();
 	const existing = getUserById(userId);
 	if (!existing) throw new Error('Usuario no encontrado.');
@@ -485,6 +597,8 @@ export function updateUser(userId, data) {
 		is_active: data.is_active !== undefined ? (data.is_active ? 1 : 0) : (existing.is_active ? 1 : 0)
 	};
 
+	const now = new Date().toISOString();
+
 	db.prepare(`
 		UPDATE users
 		SET nombre = ?, apellidos = ?, rol = ?, nif = ?, telefono = ?, is_active = ?, updated_at = ?
@@ -496,9 +610,20 @@ export function updateUser(userId, data) {
 		updated.nif,
 		updated.telefono,
 		updated.is_active,
-		new Date().toISOString(),
+		now,
 		userId
 	);
+
+	// Replicar en Supabase
+	await replicateToSupabase('updateUser', supabaseServer.from('users').update({
+		nombre: updated.nombre,
+		apellidos: updated.apellidos,
+		rol: updated.rol,
+		nif: updated.nif,
+		telefono: updated.telefono,
+		is_active: Boolean(updated.is_active),
+		updated_at: now
+	}).eq('id', userId));
 
 	return getUserById(userId);
 }
@@ -507,12 +632,16 @@ export function updateUser(userId, data) {
  * Elimina un usuario
  * @param {string} userId
  */
-export function deleteUser(userId) {
+export async function deleteUser(userId) {
 	const db = getDb();
 	const user = getUserById(userId);
 	if (!user) throw new Error('Usuario no encontrado.');
 
 	db.prepare('DELETE FROM users WHERE id = ?;').run(userId);
+
+	// Replicar en Supabase
+	await replicateToSupabase('deleteUser', supabaseServer.from('users').delete().eq('id', userId));
+
 	return { success: true, user };
 }
 
@@ -547,7 +676,7 @@ export function getParcelasByFarmer(farmerId) {
  * Crea una nueva parcela con recintos SIGPAC para un agricultor
  * @param {Object} data
  */
-export function createParcela(data) {
+export async function createParcela(data) {
 	if (!data.farmer_id) throw new Error('farmer_id es obligatorio.');
 	if (!data.nombre_referencia || !data.cultivo_actual || !data.superficie_ha) {
 		throw new Error('Nombre, cultivo y superficie catastral son obligatorios.');
@@ -606,6 +735,30 @@ export function createParcela(data) {
 		now
 	);
 
+	// Replicar en Supabase
+	await replicateToSupabase('parcelas', supabaseServer.from('parcelas').upsert([{
+		id: newId,
+		farmer_id: data.farmer_id,
+		explotacion_id: explotacionId,
+		nombre_referencia: data.nombre_referencia.trim(),
+		provincia: prov,
+		municipio: mun,
+		agregado: parseInt(data.agregado || 0),
+		zona: parseInt(data.zona || 0),
+		poligono: pol,
+		parcela: parc,
+		recinto: rec,
+		superficie_ha: parseFloat(data.superficie_ha),
+		uso_sigpac: data.uso_sigpac?.trim().toUpperCase() || 'TA',
+		sistema_explotacion: data.sistema_explotacion || 'SECANO',
+		cultivo_actual: data.cultivo_actual.trim(),
+		variedad: data.variedad?.trim() || '',
+		fecha_siembra_plantacion: data.fecha_siembra_plantacion || null,
+		activa: true,
+		created_at: now,
+		updated_at: now
+	}]));
+
 	return db.prepare('SELECT * FROM parcelas WHERE id = ?;').get(newId);
 }
 
@@ -614,7 +767,7 @@ export function createParcela(data) {
  * @param {string} parcelaId
  * @param {Object} data
  */
-export function updateParcela(parcelaId, data) {
+export async function updateParcela(parcelaId, data) {
 	const db = getDb();
 	const existing = db.prepare('SELECT * FROM parcelas WHERE id = ? AND farmer_id = ?;').get(parcelaId, data.farmer_id);
 	if (!existing) throw new Error('Parcela no encontrada o no pertenece a este titular.');
@@ -628,6 +781,8 @@ export function updateParcela(parcelaId, data) {
 		sistema_explotacion: data.sistema_explotacion !== undefined ? data.sistema_explotacion : existing.sistema_explotacion
 	};
 
+	const now = new Date().toISOString();
+
 	db.prepare(`
 		UPDATE parcelas
 		SET nombre_referencia = ?, cultivo_actual = ?, variedad = ?, superficie_ha = ?, uso_sigpac = ?, sistema_explotacion = ?, updated_at = ?
@@ -639,10 +794,16 @@ export function updateParcela(parcelaId, data) {
 		updated.superficie_ha,
 		updated.uso_sigpac,
 		updated.sistema_explotacion,
-		new Date().toISOString(),
+		now,
 		parcelaId,
 		data.farmer_id
 	);
+
+	// Replicar en Supabase
+	await replicateToSupabase('updateParcela', supabaseServer.from('parcelas').update({
+		...updated,
+		updated_at: now
+	}).eq('id', parcelaId).eq('farmer_id', data.farmer_id));
 
 	return db.prepare('SELECT * FROM parcelas WHERE id = ?;').get(parcelaId);
 }
@@ -652,16 +813,24 @@ export function updateParcela(parcelaId, data) {
  * @param {string} parcelaId
  * @param {string} farmerId
  */
-export function deleteParcela(parcelaId, farmerId) {
+export async function deleteParcela(parcelaId, farmerId) {
 	const db = getDb();
 	const existing = db.prepare('SELECT id FROM parcelas WHERE id = ? AND farmer_id = ?;').get(parcelaId, farmerId);
 	if (!existing) throw new Error('Parcela no encontrada.');
 
+	const now = new Date().toISOString();
+
 	db.prepare('UPDATE parcelas SET activa = 0, updated_at = ? WHERE id = ? AND farmer_id = ?;').run(
-		new Date().toISOString(),
+		now,
 		parcelaId,
 		farmerId
 	);
+
+	// Replicar en Supabase
+	await replicateToSupabase('deleteParcela', supabaseServer.from('parcelas').update({
+		activa: false,
+		updated_at: now
+	}).eq('id', parcelaId).eq('farmer_id', farmerId));
 
 	return { success: true, id: parcelaId };
 }
@@ -733,7 +902,7 @@ export function getTratamientosByFarmer(farmerId) {
  * Registra un nuevo tratamiento fitosanitario validando la normativa vigente
  * @param {Object} data
  */
-export function insertTratamiento(data) {
+export async function insertTratamiento(data) {
 	const db = getDb();
 
 	// 1. Validaciones básicas
@@ -787,6 +956,7 @@ export function insertTratamiento(data) {
 	const fechaRecoleccionPermitida = fechaRecoleccion.toISOString().split('T')[0];
 
 	const nuevoId = 't' + Math.random().toString(36).substring(2, 9);
+	const createdAt = new Date().toISOString();
 
 	db.prepare(`
 		INSERT INTO tratamientos_fitosanitarios (
@@ -818,7 +988,7 @@ export function insertTratamiento(data) {
 		data.justificacion_tratamiento.trim(),
 		data.condiciones_meteorologicas?.trim() || 'Sin datos',
 		data.observaciones?.trim() || '',
-		new Date().toISOString()
+		createdAt
 	);
 
 	const row = db.prepare(`
@@ -835,13 +1005,40 @@ export function insertTratamiento(data) {
 		WHERE t.id = ?;
 	`).get(nuevoId);
 
+	// Replicar en Supabase para almacenamiento en la nube y disparo de eventos Realtime
+	await replicateToSupabase('tratamientos_fitosanitarios', supabaseServer.from('tratamientos_fitosanitarios').upsert([{
+		id: nuevoId,
+		farmer_id: data.farmer_id,
+		parcela_id: data.parcela_id,
+		operario_id: data.operario_id,
+		maquinaria_id: data.maquinaria_id,
+		fecha_tratamiento: data.fecha_tratamiento,
+		problema_fitosanitario: data.problema_fitosanitario?.trim() || 'Plaga / Enfermedad',
+		nombre_comercial: data.nombre_comercial.trim(),
+		numero_registro_magrama: data.numero_registro_magrama.trim(),
+		materia_activa: data.materia_activa.trim(),
+		dosis_valor: parseFloat(data.dosis_valor) || 0,
+		dosis_unidad: data.dosis_unidad || 'l/ha',
+		volumen_caldo_l_ha: parseFloat(data.volumen_caldo_l_ha) || 0,
+		superficie_tratada_ha: supTratada,
+		plazo_seguridad_dias: plazoDias,
+		fecha_recoleccion_permitida: fechaRecoleccionPermitida,
+		justificacion_tratamiento: data.justificacion_tratamiento.trim(),
+		condiciones_meteorologicas: data.condiciones_meteorologicas?.trim() || 'Sin datos',
+		observaciones: data.observaciones?.trim() || '',
+		created_at: createdAt
+	}]));
+
 	return row;
 }
 
 /**
- * Re-siembra la base de datos con los datos oficiales de demostración
+ * Re-siembra la base de datos con los datos oficiales de demostración y sincroniza Supabase
  * @param {boolean} force
  */
-export function reseedDemoData(force = true) {
-	return seedDatabase(getDb(), force);
+export async function reseedDemoData(force = true) {
+	const db = getDb();
+	const seedRes = seedDatabase(db, force);
+	const supabaseSync = await syncLocalSnapshotToSupabase(db);
+	return { ...seedRes, supabaseSync };
 }

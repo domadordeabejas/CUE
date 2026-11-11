@@ -20,7 +20,7 @@ export async function GET({ url }) {
 export async function POST({ request }) {
 	try {
 		const body = await request.json();
-		const user = createUser(body);
+		const user = await createUser(body);
 		return json({
 			success: true,
 			message: `Usuario ${user.nombre} (${user.rol}) creado con éxito.`,
@@ -40,7 +40,7 @@ export async function PUT({ request }) {
 		const { id, ...data } = body;
 		if (!id) return json({ success: false, message: 'ID de usuario requerido' }, { status: 400 });
 
-		const updated = updateUser(id, data);
+		const updated = await updateUser(id, data);
 		return json({
 			success: true,
 			message: `Usuario ${updated.nombre} actualizado.`,
@@ -59,7 +59,7 @@ export async function DELETE({ url }) {
 	if (!id) return json({ success: false, message: 'ID de usuario requerido' }, { status: 400 });
 
 	try {
-		const res = deleteUser(id);
+		const res = await deleteUser(id);
 		return json({ success: true, message: 'Usuario eliminado correctamente.', data: res });
 	} catch (err) {
 		return json({ success: false, message: err.message }, { status: 400 });

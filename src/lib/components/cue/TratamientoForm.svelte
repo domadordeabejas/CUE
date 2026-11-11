@@ -8,7 +8,7 @@
 	import ParcelaSelector from './ParcelaSelector.svelte';
 	import OperarioSelector from './OperarioSelector.svelte';
 	import MaquinaSelector from './MaquinaSelector.svelte';
-	import { broadcastLocalChange, saveTratamientoToSupabase } from '$lib/supabase.js';
+	import { broadcastLocalChange } from '$lib/supabase.js';
 
 	let {
 		parcelas = [],
@@ -152,16 +152,17 @@
 
 			const data = await res.json();
 			if (data.success) {
+				const savedTratamiento = data.tratamiento || data.data;
 				submitFeedback = {
 					success: true,
 					message: '¡Tratamiento fitosanitario registrado y transmitido en tiempo real a Supabase!'
 				};
 
-				// Notificación y transmisión en tiempo real
-				broadcastLocalChange('INSERT', data.data);
-				saveTratamientoToSupabase(payload);
-
-				if (onSuccess) onSuccess(data.data);
+				// Notificación instantánea a otras pestañas; el servidor ya replicó en Supabase
+				if (savedTratamiento) {
+					broadcastLocalChange('INSERT', savedTratamiento, 'tratamientos_fitosanitarios');
+					if (onSuccess) onSuccess(savedTratamiento);
+				}
 			} else {
 				submitFeedback = { success: false, message: data.message };
 			}

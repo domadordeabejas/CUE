@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST({ request }) {
 	try {
 		const body = await request.json();
-		const farmer = createFarmer(body);
+		const farmer = await createFarmer(body);
 		return json({
 			success: true,
 			message: `Explotación agrícola ${farmer.nombre_titular} dada de alta con éxito.`,
@@ -39,7 +39,7 @@ export async function PUT({ request }) {
 		const { id, ...data } = body;
 		if (!id) return json({ success: false, message: 'ID de agricultor requerido' }, { status: 400 });
 
-		const updated = updateFarmer(id, data);
+		const updated = await updateFarmer(id, data);
 		return json({
 			success: true,
 			message: `Datos de ${updated.nombre_titular} actualizados.`,

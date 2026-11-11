@@ -5,7 +5,8 @@
  */
 
 import { json } from '@sveltejs/kit';
-import { resetProjectDatabase, getDatabaseStats, getSqlScriptByDialect } from '$lib/server/db.js';
+import { getDb, resetProjectDatabase, getDatabaseStats, getSqlScriptByDialect } from '$lib/server/db.js';
+import { syncLocalSnapshotToSupabase } from '$lib/server/supabase-client.js';
 
 export async function GET({ locals }) {
 	if (locals.user && locals.user.rol !== 'SUPERADMIN') {
@@ -37,9 +38,12 @@ export async function POST({ request, locals }) {
 
 		if (action === 'reset_project') {
 			const result = resetProjectDatabase();
+			const sbSync = await syncLocalSnapshotToSupabase(getDb());
+			const supabaseMsg = sbSync.synced && sbSync.success ? ' y sincronizado con Supabase Cloud.' : '';
+
 			return json({
 				success: true,
-				message: 'Proyecto reiniciado con éxito. Se han regenerado todas las tablas relacionales y reinsertado todos los datos de demostración.',
+				message: `Proyecto reiniciado con éxito. Se han regenerado todas las tablas relacionales y reinsertado todos los datos de demostración${supabaseMsg}`,
 				stats: result.stats
 			});
 		}
@@ -56,11 +60,13 @@ export async function POST({ request, locals }) {
 		}
 
 		if (action === 'init_database') {
-			// Si el destino es local SQLite, regenera la base de datos
+			// Si el destino es local SQLite, regenera la base de datos y replica si Supabase está listo
 			const result = resetProjectDatabase();
+			const sbSync = await syncLocalSnapshotToSupabase(getDb());
+			const supabaseMsg = sbSync.synced && sbSync.success ? ' y sincronizado con Supabase Cloud.' : '';
 			return json({
 				success: true,
-				message: `Base de datos inicializada correctamente para el dialecto ${dialect.toUpperCase()}.`,
+				message: `Base de datos inicializada correctamente para el dialecto ${dialect.toUpperCase()}${supabaseMsg}`,
 				stats: result.stats
 			});
 		}

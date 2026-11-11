@@ -41,25 +41,27 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
 }
 
 /**
- * Suscribe un callback a cambios en tiempo real en la tabla tratamientos_fitosanitarios
- * @param {Function} onEvent - Recibe { eventType: 'INSERT' | 'UPDATE' | 'DELETE', new: Object, old: Object }
+ * Suscribe un callback a cambios en tiempo real (INSERT, UPDATE, DELETE) sobre una o varias tablas de Supabase
+ * @param {string[]} tables - Lista de tablas en el esquema public
+ * @param {Function} onEvent - Recibe { table, eventType: 'INSERT' | 'UPDATE' | 'DELETE', new: Object, old: Object, source }
+ * @param {string} [channelName] - Nombre único de canal
  * @returns {Function} cleanup - Función para cancelar la suscripción
  */
-export function subscribeToTratamientosRealtime(onEvent) {
-	// 1. Canal oficial de Supabase Realtime (PostgreSQL Changes)
-	const channel = supabase
-		.channel('realtime_cue_tratamientos')
-		.on(
+export function subscribeToRealtimeTables(tables = ['tratamientos_fitosanitarios'], onEvent, channelName = 'realtime_cue_sync') {
+	const channel = supabase.channel(channelName);
+
+	for (const table of tables) {
+		channel.on(
 			'postgres_changes',
 			{
 				event: '*',
 				schema: 'public',
-				table: 'tratamientos_fitosanitarios'
+				table
 			},
 			(payload) => {
-				console.log('⚡ [Supabase Realtime] Evento recibido:', payload);
 				if (onEvent) {
 					onEvent({
+						table,
 						eventType: payload.eventType,
 						new: payload.new,
 						old: payload.old,
@@ -67,21 +69,23 @@ export function subscribeToTratamientosRealtime(onEvent) {
 					});
 				}
 			}
-		)
-		.subscribe((status, err) => {
-			if (err) {
-				console.warn('⚠️ [Supabase Realtime] Aviso de conexión:', err);
-			} else {
-				console.log(`🔌 [Supabase Realtime] Estado canal: ${status}`);
-			}
-		});
+		);
+	}
 
-	// 2. Listener complementario para sincronización inter-pestañas inmediata
+	channel.subscribe((status, err) => {
+		if (err) {
+			console.warn(`⚠️ [Supabase Realtime ${channelName}] Aviso de conexión:`, err);
+		}
+	});
+
+	// Listener complementario para sincronización inter-pestañas inmediata
 	const localHandler = (event) => {
-		if (event.data && onEvent) {
-			console.log('⚡ [Local Realtime Broadcast] Evento recibido:', event.data);
+		if (!event.data || !onEvent) return;
+		const evtTable = event.data.table || 'tratamientos_fitosanitarios';
+		if (tables.includes(evtTable)) {
 			onEvent({
 				...event.data,
+				table: evtTable,
 				source: 'LOCAL_BROADCAST'
 			});
 		}
@@ -91,7 +95,6 @@ export function subscribeToTratamientosRealtime(onEvent) {
 		localBroadcast.addEventListener('message', localHandler);
 	}
 
-	// Función de limpieza al desmontar el componente (Svelte 5 $effect)
 	return () => {
 		supabase.removeChannel(channel);
 		if (localBroadcast) {
@@ -101,13 +104,24 @@ export function subscribeToTratamientosRealtime(onEvent) {
 }
 
 /**
- * Emite un evento en tiempo real para todos los clientes conectados
+ * Suscribe un callback a cambios en tiempo real en la tabla tratamientos_fitosanitarios
+ * @param {Function} onEvent - Recibe { eventType: 'INSERT' | 'UPDATE' | 'DELETE', new: Object, old: Object }
+ * @returns {Function} cleanup - Función para cancelar la suscripción
+ */
+export function subscribeToTratamientosRealtime(onEvent) {
+	return subscribeToRealtimeTables(['tratamientos_fitosanitarios'], onEvent, 'realtime_cue_tratamientos');
+}
+
+/**
+ * Emite un evento en tiempo real para otras pestañas del navegador
  * @param {string} eventType - 'INSERT' | 'UPDATE' | 'DELETE'
  * @param {Object} data - Registro afectado
+ * @param {string} [table] - Tabla afectada
  */
-export function broadcastLocalChange(eventType, data) {
-	if (localBroadcast) {
+export function broadcastLocalChange(eventType, data, table = 'tratamientos_fitosanitarios') {
+	if (localBroadcast && data) {
 		localBroadcast.postMessage({
+			table,
 			eventType,
 			new: data,
 			timestamp: new Date().toISOString()

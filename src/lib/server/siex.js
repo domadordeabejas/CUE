@@ -6,6 +6,7 @@
  */
 
 import { getDb, getFarmerById, getParcelasByFarmer, getOperariosByFarmer, getMaquinariaByFarmer, getTratamientosByFarmer } from './db.js';
+import { supabaseServer, replicateToSupabase } from './supabase-client.js';
 
 /**
  * Genera la estructura de datos oficial normalizada en formato JSON según el estándar SIEX / CUE
@@ -422,9 +423,9 @@ export function validateSiexCompliance(farmerId) {
  * con generación de recibo oficial, Asiento Registral y CSV (Código Seguro de Verificación)
  * @param {string} farmerId
  * @param {Object} options
- * @returns {Object} Justificante de Presentación Oficial
+ * @returns {Promise<Object>} Justificante de Presentación Oficial
  */
-export function dispatchToSiex(farmerId, options = {}) {
+export async function dispatchToSiex(farmerId, options = {}) {
 	const db = getDb();
 	const compliance = validateSiexCompliance(farmerId);
 	const farmer = getFarmerById(farmerId);
@@ -444,23 +445,38 @@ export function dispatchToSiex(farmerId, options = {}) {
 	// Sello de tiempo oficial
 	const fechaRegistro = new Date().toISOString();
 
-	// Guardar log de auditoría en la BD SQL
+	// Guardar log de auditoría en la BD SQL y replicar en Supabase
+	const logId = 'log_siex_' + Math.random().toString(36).substring(2, 9);
+	const logStatus = compliance.isCompliant ? 'SUCCESS' : 'WARNING';
+	const logScript = `[TELEMATICA_SIEX] Sincronización oficial Cuaderno CUE. Titular: ${farmer.nombre_titular} (NIF ${farmer.cif_nif}). Asiento: ${asientoRegistral}. CSV: ${csv}.`;
+
 	try {
-		const logId = 'log_siex_' + Math.random().toString(36).substring(2, 9);
 		db.prepare(`
 			INSERT INTO sql_execution_logs (id, sqlScript, operationType, status, rowsAffected, errorMessage, executionTimeMs, userEmail, executedAt)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`).run(
 			logId,
-			`[TELEMATICA_SIEX] Sincronización oficial Cuaderno CUE. Titular: ${farmer.nombre_titular} (NIF ${farmer.cif_nif}). Asiento: ${asientoRegistral}. CSV: ${csv}.`,
+			logScript,
 			'SIEX_DISPATCH',
-			compliance.isCompliant ? 'SUCCESS' : 'WARNING',
+			logStatus,
 			compliance.totalTratamientos,
 			null,
 			142,
 			farmer.email_contacto,
-			new Date().toISOString()
+			fechaRegistro
 		);
+
+		await replicateToSupabase('siex_dispatch_log', supabaseServer.from('sql_execution_logs').upsert([{
+			id: logId,
+			sqlScript: logScript,
+			operationType: 'SIEX_DISPATCH',
+			status: logStatus,
+			rowsAffected: compliance.totalTratamientos,
+			errorMessage: null,
+			executionTimeMs: 142,
+			userEmail: farmer.email_contacto,
+			executedAt: fechaRegistro
+		}], { onConflict: 'id' }));
 	} catch (e) {
 		console.warn('No se pudo guardar log SIEX:', e.message);
 	}

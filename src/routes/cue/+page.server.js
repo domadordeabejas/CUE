@@ -4,7 +4,8 @@ import {
 	getOperariosByFarmer,
 	getMaquinariaByFarmer,
 	getTratamientosByFarmer,
-	getUsers
+	getUsers,
+	syncFromSupabase
 } from '$lib/server/db.js';
 import { error } from '@sveltejs/kit';
 
@@ -13,6 +14,7 @@ import { error } from '@sveltejs/kit';
  * Aislamiento estricto forzado por la sesión del usuario autenticado
  */
 export async function load({ locals, url }) {
+	await syncFromSupabase();
 	const user = locals.user;
 	if (!user) {
 		throw error(401, 'No autenticado');

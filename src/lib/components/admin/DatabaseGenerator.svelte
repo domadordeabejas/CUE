@@ -483,7 +483,7 @@
 					<pre class="m-0 p-3 bg-dark text-light font-monospace small" style="max-height: 480px; overflow-y: auto;"><code>{generatedSql}</code></pre>
 				</div>
 
-				<div class="modal-footer bg-light py-2">
+				<div class="modal-footer bg-light py-2 d-flex flex-wrap justify-content-between gap-2">
 					<button
 						type="button"
 						class="btn btn-outline-secondary btn-sm"
@@ -491,17 +491,30 @@
 					>
 						Cerrar
 					</button>
-					<button
-						type="button"
-						class="btn btn-warning btn-sm text-dark d-flex align-items-center gap-1"
-						onclick={() => {
-							showSqlModal = false;
-							sendToSqlConsole();
-						}}
-					>
-						<i class="bi bi-terminal-fill"></i>
-						Abrir en la Consola SQL Interna
-					</button>
+					<div class="d-flex flex-wrap gap-2">
+						{#if selectedDialect === 'postgres'}
+							<a
+								href="https://supabase.com/dashboard/project/xeqnlmfyvijdgclfhzgf/sql"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="btn btn-success btn-sm text-white d-flex align-items-center gap-1"
+							>
+								<i class="bi bi-box-arrow-up-right"></i>
+								Abrir SQL Editor de Supabase
+							</a>
+						{/if}
+						<button
+							type="button"
+							class="btn btn-warning btn-sm text-dark d-flex align-items-center gap-1"
+							onclick={() => {
+								showSqlModal = false;
+								sendToSqlConsole();
+							}}
+						>
+							<i class="bi bi-terminal-fill"></i>
+							Abrir en la Consola SQL Interna
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>

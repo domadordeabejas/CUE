@@ -32,9 +32,7 @@
 	});
 
 	$effect(() => {
-		if (parcelas.length === 0 && initialParcelas.length > 0) {
-			parcelas = [...initialParcelas];
-		}
+		parcelas = [...initialParcelas];
 	});
 
 	// Superficie total cultivada derivada

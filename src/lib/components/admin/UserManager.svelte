@@ -44,12 +44,8 @@
 	});
 
 	$effect(() => {
-		if (farmers.length === 0 && initialFarmers.length > 0) {
-			farmers = [...initialFarmers];
-		}
-		if (users.length === 0 && initialUsers.length > 0) {
-			users = [...initialUsers];
-		}
+		farmers = [...initialFarmers];
+		users = [...initialUsers];
 	});
 
 	// Usuarios filtrados por inquilino derivado

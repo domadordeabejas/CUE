@@ -9,9 +9,9 @@
 	import TratamientosList from '$lib/components/cue/TratamientosList.svelte';
 	import ParcelasManager from '$lib/components/cue/ParcelasManager.svelte';
 	import SiexSyncManager from '$lib/components/cue/SiexSyncManager.svelte';
-	import { subscribeToTratamientosRealtime } from '$lib/supabase.js';
+	import { subscribeToRealtimeTables } from '$lib/supabase.js';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 
 	let { data } = $props();
 
@@ -36,40 +36,97 @@
 	// Pestaña activa sincronizada con la URL y la barra lateral
 	let activeTab = $derived(page.url.searchParams.get('tab') || 'form');
 
+	function enrichTratamiento(nuevo) {
+		const parcela = parcelas.find(p => p.id === nuevo.parcela_id);
+		const operario = data.operarios.find(o => o.id === nuevo.operario_id);
+		const maquina = data.maquinas.find(m => m.id === nuevo.maquinaria_id);
+
+		return {
+			...nuevo,
+			parcela_nombre: parcela ? parcela.nombre_referencia : (nuevo.parcela_nombre || 'Parcela'),
+			sigpac_str: parcela ? `${parcela.provincia}/${parcela.municipio}/Pol.${parcela.poligono}/Parc.${parcela.parcela}/Rec.${parcela.recinto}` : (nuevo.sigpac_str || ''),
+			operario_nombre: operario ? `${operario.nombre} ${operario.apellidos} (${operario.numero_ropo})` : (nuevo.operario_nombre || 'Operario'),
+			maquina_nombre: maquina ? `${maquina.tipo_maquina} (${maquina.numero_roma})` : (nuevo.maquina_nombre || 'Maquinaria')
+		};
+	}
+
+	// Sincronización reactiva con datos del SSR
 	$effect(() => {
-		// Sincronización reactiva con datos del SSR
 		tratamientos = [...data.tratamientos];
 		parcelas = [...data.parcelas];
 		usersList = [...(data.users || [])];
+	});
 
-		// Suscripción en tiempo real a Supabase filtrada
-		const unsubscribe = subscribeToTratamientosRealtime((payload) => {
-			if (payload.eventType === 'INSERT' && payload.new) {
-				const nuevo = payload.new;
-				// Garantizar aislamiento multi-tenant en tiempo real
-				if (nuevo.farmer_id && nuevo.farmer_id !== data.farmerId) {
+	// Suscripción en tiempo real a Supabase (PostgreSQL Changes) aislada por farmerId
+	$effect(() => {
+		const activeFarmerId = data.farmerId;
+		let refreshTimer = null;
+		const scheduleRefresh = () => {
+			if (refreshTimer) clearTimeout(refreshTimer);
+			refreshTimer = setTimeout(() => invalidateAll(), 250);
+		};
+
+		const unsubscribe = subscribeToRealtimeTables(
+			['tratamientos_fitosanitarios', 'parcelas', 'ropo_trabajadores', 'roma_maquinaria', 'users', 'farmers'],
+			(payload) => {
+				const rec = payload.new || payload.old || {};
+				const recordFarmerId = payload.table === 'farmers' ? rec.id : rec.farmer_id;
+				if (recordFarmerId && recordFarmerId !== activeFarmerId) {
 					return;
 				}
 
-				const alreadyExists = tratamientos.some(t => t.id === nuevo.id);
-				if (!alreadyExists) {
-					const parcela = parcelas.find(p => p.id === nuevo.parcela_id);
-					const operario = data.operarios.find(o => o.id === nuevo.operario_id);
-					const maquina = data.maquinas.find(m => m.id === nuevo.maquinaria_id);
-
-					const enriched = {
-						...nuevo,
-						parcela_nombre: parcela ? parcela.nombre_referencia : (nuevo.parcela_nombre || 'Parcela'),
-						sigpac_str: parcela ? `${parcela.provincia}/${parcela.municipio}/Pol.${parcela.poligono}/Parc.${parcela.parcela}/Rec.${parcela.recinto}` : '',
-						operario_nombre: operario ? `${operario.nombre} ${operario.apellidos} (${operario.numero_ropo})` : (nuevo.operario_nombre || 'Operario'),
-						maquina_nombre: maquina ? `${maquina.tipo_maquina} (${maquina.numero_roma})` : (nuevo.maquina_nombre || 'Maquinaria')
-					};
-					tratamientos = [enriched, ...tratamientos];
+				if (payload.table === 'tratamientos_fitosanitarios') {
+					if (payload.eventType === 'INSERT' && payload.new) {
+						if (!tratamientos.some(t => t.id === payload.new.id)) {
+							tratamientos = [enrichTratamiento(payload.new), ...tratamientos];
+						}
+					} else if (payload.eventType === 'UPDATE' && payload.new) {
+						tratamientos = tratamientos.map(t => t.id === payload.new.id ? enrichTratamiento(payload.new) : t);
+					} else if (payload.eventType === 'DELETE' && payload.old?.id) {
+						tratamientos = tratamientos.filter(t => t.id !== payload.old.id);
+					}
+					return;
 				}
-			}
-		});
+
+				if (payload.table === 'parcelas') {
+					if (payload.eventType === 'INSERT' && payload.new && payload.new.activa !== false) {
+						if (!parcelas.some(p => p.id === payload.new.id)) {
+							parcelas = [payload.new, ...parcelas];
+						}
+					} else if (payload.eventType === 'UPDATE' && payload.new) {
+						if (payload.new.activa === false) {
+							parcelas = parcelas.filter(p => p.id !== payload.new.id);
+						} else if (parcelas.some(p => p.id === payload.new.id)) {
+							parcelas = parcelas.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p);
+						} else {
+							parcelas = [payload.new, ...parcelas];
+						}
+					} else if (payload.eventType === 'DELETE' && payload.old?.id) {
+						parcelas = parcelas.filter(p => p.id !== payload.old.id);
+					}
+					return;
+				}
+
+				if (payload.table === 'users') {
+					if (payload.eventType === 'INSERT' && payload.new) {
+						if (!usersList.some(u => u.id === payload.new.id)) {
+							usersList = [...usersList, payload.new];
+						}
+					} else if (payload.eventType === 'UPDATE' && payload.new) {
+						usersList = usersList.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u);
+					} else if (payload.eventType === 'DELETE' && payload.old?.id) {
+						usersList = usersList.filter(u => u.id !== payload.old.id);
+					}
+					return;
+				}
+
+				scheduleRefresh();
+			},
+			`realtime_cue_${activeFarmerId}`
+		);
 
 		return () => {
+			if (refreshTimer) clearTimeout(refreshTimer);
 			unsubscribe();
 		};
 	});
@@ -80,19 +137,10 @@
 
 	// Manejador cuando se registra un nuevo tratamiento fitosanitario
 	function handleNewTratamiento(nuevo) {
-		const parcela = parcelas.find(p => p.id === nuevo.parcela_id);
-		const operario = data.operarios.find(o => o.id === nuevo.operario_id);
-		const maquina = data.maquinas.find(m => m.id === nuevo.maquinaria_id);
-
-		const enriched = {
-			...nuevo,
-			parcela_nombre: parcela ? parcela.nombre_referencia : 'Parcela',
-			sigpac_str: parcela ? `${parcela.provincia}/${parcela.municipio}/Pol.${parcela.poligono}/Parc.${parcela.parcela}/Rec.${parcela.recinto}` : '',
-			operario_nombre: operario ? `${operario.nombre} ${operario.apellidos} (${operario.numero_ropo})` : 'Operario',
-			maquina_nombre: maquina ? `${maquina.tipo_maquina} (${maquina.numero_roma})` : 'Maquinaria'
-		};
-
-		tratamientos = [enriched, ...tratamientos];
+		if (!nuevo) return;
+		if (!tratamientos.some(t => t.id === nuevo.id)) {
+			tratamientos = [enrichTratamiento(nuevo), ...tratamientos];
+		}
 		switchTab('list');
 	}
 

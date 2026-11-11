@@ -533,7 +533,9 @@ export function getSqlScriptByDialect(dialect = 'postgres', includeDemo = true) 
 		if (fs.existsSync(setupPath)) {
 			let content = fs.readFileSync(setupPath, 'utf-8');
 			if (!includeDemo) {
-				const splitIndex = content.indexOf('-- SEED DATA COMPLETO');
+				const splitIndex = content.indexOf('-- 5. DATOS DE PRUEBA') !== -1 
+					? content.indexOf('-- 5. DATOS DE PRUEBA') 
+					: content.indexOf('-- SEED DATA COMPLETO');
 				if (splitIndex !== -1) {
 					content = content.substring(0, splitIndex).trim();
 				}

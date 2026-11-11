@@ -4,16 +4,15 @@
 -- https://supabase.com/dashboard/project/xeqnlmfyvijdgclfhzgf/sql
 -- ============================================================================
 
--- Habilitar extensiones requeridas
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Habilitar extensiones requeridas si están disponibles
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================================
--- 1. TABLAS CORE MULTI-TENANT
+-- 1. TABLAS CORE MULTI-TENANT (TEXT IDs para compatibilidad total con el SaaS)
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.farmers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id TEXT PRIMARY KEY,
     nombre_titular VARCHAR(150) NOT NULL,
     cif_nif VARCHAR(20) NOT NULL UNIQUE,
     email_contacto VARCHAR(150) NOT NULL,
@@ -28,8 +27,8 @@ CREATE TABLE IF NOT EXISTS public.farmers (
 );
 
 CREATE TABLE IF NOT EXISTS public.users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID REFERENCES public.farmers(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT REFERENCES public.farmers(id) ON DELETE CASCADE,
     nombre VARCHAR(100) NOT NULL,
     apellidos VARCHAR(150) NOT NULL,
     email VARCHAR(150) NOT NULL UNIQUE,
@@ -43,23 +42,23 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 CREATE TABLE IF NOT EXISTS public.explotaciones (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
     codigo_rea VARCHAR(50) NOT NULL,
     nombre VARCHAR(150) NOT NULL,
     titular_nif VARCHAR(20) NOT NULL,
     municipio_sede VARCHAR(100) NOT NULL,
     provincia_sede VARCHAR(100) NOT NULL,
-    tipo_explotacion VARCHAR(50) NOT NULL DEFAULT 'AGRICOLA',
+    tipo_explotacion VARCHAR(50) NOT NULL DEFAULT 'AGRICOLA_MIXTA',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_sb_farmer_rea UNIQUE (farmer_id, codigo_rea)
 );
 
 CREATE TABLE IF NOT EXISTS public.parcelas (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
-    explotacion_id UUID NOT NULL REFERENCES public.explotaciones(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    explotacion_id TEXT NOT NULL REFERENCES public.explotaciones(id) ON DELETE CASCADE,
     nombre_referencia VARCHAR(150) NOT NULL,
     provincia SMALLINT NOT NULL CHECK (provincia BETWEEN 1 AND 52),
     municipio SMALLINT NOT NULL CHECK (municipio > 0),
@@ -81,8 +80,8 @@ CREATE TABLE IF NOT EXISTS public.parcelas (
 );
 
 CREATE TABLE IF NOT EXISTS public.ropo_trabajadores (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
     nombre VARCHAR(100) NOT NULL,
     apellidos VARCHAR(150) NOT NULL,
     nif VARCHAR(20) NOT NULL,
@@ -98,8 +97,8 @@ CREATE TABLE IF NOT EXISTS public.ropo_trabajadores (
 );
 
 CREATE TABLE IF NOT EXISTS public.roma_maquinaria (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
     tipo_maquina VARCHAR(100) NOT NULL,
     marca VARCHAR(100) NOT NULL,
     modelo VARCHAR(100) NOT NULL,
@@ -120,18 +119,18 @@ CREATE TABLE IF NOT EXISTS public.roma_maquinaria (
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.tratamientos_fitosanitarios (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    farmer_id UUID NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
-    parcela_id UUID NOT NULL REFERENCES public.parcelas(id) ON DELETE CASCADE,
-    operario_id UUID NOT NULL REFERENCES public.ropo_trabajadores(id) ON DELETE RESTRICT,
-    maquinaria_id UUID NOT NULL REFERENCES public.roma_maquinaria(id) ON DELETE RESTRICT,
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    parcela_id TEXT NOT NULL REFERENCES public.parcelas(id) ON DELETE CASCADE,
+    operario_id TEXT NOT NULL REFERENCES public.ropo_trabajadores(id) ON DELETE RESTRICT,
+    maquinaria_id TEXT NOT NULL REFERENCES public.roma_maquinaria(id) ON DELETE RESTRICT,
     fecha_tratamiento DATE NOT NULL,
     problema_fitosanitario VARCHAR(255) NOT NULL,
     nombre_comercial VARCHAR(255) NOT NULL,
     numero_registro_magrama VARCHAR(100) NOT NULL,
     materia_activa VARCHAR(255) NOT NULL,
     dosis_valor DECIMAL(10, 3) NOT NULL CHECK (dosis_valor > 0),
-    dosis_unidad VARCHAR(20) NOT NULL CHECK (dosis_unidad IN ('kg/ha', 'l/ha', '%', 'g/hl')),
+    dosis_unidad VARCHAR(20) NOT NULL CHECK (dosis_unidad IN ('kg/ha', 'l/ha', 'l/hl', '%', 'g/hl')),
     volumen_caldo_l_ha DECIMAL(10, 2) CHECK (volumen_caldo_l_ha >= 0),
     superficie_tratada_ha DECIMAL(10, 4) NOT NULL CHECK (superficie_tratada_ha > 0),
     plazo_seguridad_dias INTEGER NOT NULL DEFAULT 0 CHECK (plazo_seguridad_dias >= 0),
@@ -143,46 +142,134 @@ CREATE TABLE IF NOT EXISTS public.tratamientos_fitosanitarios (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS public.fertilizaciones (
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    parcela_id TEXT NOT NULL REFERENCES public.parcelas(id) ON DELETE CASCADE,
+    fecha_fertilizacion DATE NOT NULL,
+    tipo_fertilizante VARCHAR(50) NOT NULL,
+    nombre_producto VARCHAR(255) NOT NULL,
+    dosis_kg_ha DECIMAL(10, 2) NOT NULL,
+    unidades_nitrogeno_n DECIMAL(8, 2) DEFAULT 0,
+    unidades_fosforo_p DECIMAL(8, 2) DEFAULT 0,
+    unidades_potasio_k DECIMAL(8, 2) DEFAULT 0,
+    metodo_aplicacion VARCHAR(100),
+    observaciones TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.riegos (
+    id TEXT PRIMARY KEY,
+    farmer_id TEXT NOT NULL REFERENCES public.farmers(id) ON DELETE CASCADE,
+    parcela_id TEXT NOT NULL REFERENCES public.parcelas(id) ON DELETE CASCADE,
+    fecha_riego DATE NOT NULL,
+    volumen_m3 DECIMAL(10, 2) NOT NULL CHECK (volumen_m3 > 0),
+    metodo_riego VARCHAR(50) NOT NULL,
+    duracion_horas DECIMAL(6, 2),
+    observaciones TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.config_database (
+    id TEXT PRIMARY KEY,
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL DEFAULT 5432,
+    database_name VARCHAR(100) NOT NULL,
+    username VARCHAR(100) NOT NULL,
+    password_encrypted TEXT NOT NULL,
+    ssl_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    max_connections INTEGER NOT NULL DEFAULT 20,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.config_api_endpoints (
+    service_id VARCHAR(50) PRIMARY KEY,
+    service_name VARCHAR(150) NOT NULL,
+    endpoint_url TEXT NOT NULL,
+    auth_type VARCHAR(50) NOT NULL DEFAULT 'NONE',
+    api_key_encrypted TEXT,
+    environment VARCHAR(20) NOT NULL DEFAULT 'SANDBOX',
+    timeout_ms INTEGER NOT NULL DEFAULT 10000,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    extra_headers TEXT,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.sql_execution_logs (
+    id TEXT PRIMARY KEY,
+    "sqlScript" TEXT NOT NULL,
+    "operationType" VARCHAR(50) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    "rowsAffected" INTEGER NOT NULL DEFAULT 0,
+    "errorMessage" TEXT,
+    "executionTimeMs" INTEGER NOT NULL DEFAULT 0,
+    "userEmail" VARCHAR(150) NOT NULL,
+    "executedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================================
+-- 2B. ÍNDICES MULTI-TENANT Y CLAVES FORÁNEAS
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_users_farmer_id ON public.users(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_explotaciones_farmer_id ON public.explotaciones(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_parcelas_farmer_id ON public.parcelas(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_parcelas_explotacion_id ON public.parcelas(explotacion_id);
+CREATE INDEX IF NOT EXISTS idx_ropo_farmer_id ON public.ropo_trabajadores(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_roma_farmer_id ON public.roma_maquinaria(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_tratamientos_farmer_id ON public.tratamientos_fitosanitarios(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_tratamientos_parcela_id ON public.tratamientos_fitosanitarios(parcela_id);
+CREATE INDEX IF NOT EXISTS idx_tratamientos_operario_id ON public.tratamientos_fitosanitarios(operario_id);
+CREATE INDEX IF NOT EXISTS idx_tratamientos_maquinaria_id ON public.tratamientos_fitosanitarios(maquinaria_id);
+CREATE INDEX IF NOT EXISTS idx_fertilizaciones_farmer_id ON public.fertilizaciones(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_fertilizaciones_parcela_id ON public.fertilizaciones(parcela_id);
+CREATE INDEX IF NOT EXISTS idx_riegos_farmer_id ON public.riegos(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_riegos_parcela_id ON public.riegos(parcela_id);
+
 -- ============================================================================
 -- 3. HABILITACIÓN DE SUPABASE REALTIME (PUBLICACIÓN POSTGRES EN TIEMPO REAL)
 -- ============================================================================
 
--- Habilitar réplica completa para capturar deltas en cambios
-ALTER TABLE public.tratamientos_fitosanitarios REPLICA IDENTITY FULL;
+ALTER TABLE public.farmers REPLICA IDENTITY FULL;
+ALTER TABLE public.users REPLICA IDENTITY FULL;
+ALTER TABLE public.explotaciones REPLICA IDENTITY FULL;
 ALTER TABLE public.parcelas REPLICA IDENTITY FULL;
 ALTER TABLE public.ropo_trabajadores REPLICA IDENTITY FULL;
 ALTER TABLE public.roma_maquinaria REPLICA IDENTITY FULL;
+ALTER TABLE public.tratamientos_fitosanitarios REPLICA IDENTITY FULL;
+ALTER TABLE public.fertilizaciones REPLICA IDENTITY FULL;
+ALTER TABLE public.riegos REPLICA IDENTITY FULL;
+ALTER TABLE public.config_database REPLICA IDENTITY FULL;
+ALTER TABLE public.config_api_endpoints REPLICA IDENTITY FULL;
+ALTER TABLE public.sql_execution_logs REPLICA IDENTITY FULL;
 
--- Agregar tablas a la publicación de Supabase Realtime
 DO $$
+DECLARE
+    tbl TEXT;
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'tratamientos_fitosanitarios'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.tratamientos_fitosanitarios;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'parcelas'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.parcelas;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'ropo_trabajadores'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.ropo_trabajadores;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'roma_maquinaria'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.roma_maquinaria;
-    END IF;
+    FOREACH tbl IN ARRAY ARRAY[
+        'farmers',
+        'users',
+        'explotaciones',
+        'parcelas',
+        'ropo_trabajadores',
+        'roma_maquinaria',
+        'tratamientos_fitosanitarios',
+        'fertilizaciones',
+        'riegos',
+        'config_database',
+        'config_api_endpoints',
+        'sql_execution_logs'
+    ]
+    LOOP
+        IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = tbl) THEN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);
+        END IF;
+    END LOOP;
 END $$;
 
 -- ============================================================================
@@ -190,21 +277,49 @@ END $$;
 -- ============================================================================
 
 ALTER TABLE public.farmers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.explotaciones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.parcelas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ropo_trabajadores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roma_maquinaria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tratamientos_fitosanitarios ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fertilizaciones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.riegos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.config_database ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.config_api_endpoints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sql_execution_logs ENABLE ROW LEVEL SECURITY;
 
--- Permitir lectura y escritura con clave anon/publishable para el MVP
-CREATE POLICY "Permitir lectura publica MVP" ON public.farmers FOR SELECT USING (true);
-CREATE POLICY "Permitir lectura parcelas MVP" ON public.parcelas FOR SELECT USING (true);
-CREATE POLICY "Permitir lectura ropo MVP" ON public.ropo_trabajadores FOR SELECT USING (true);
-CREATE POLICY "Permitir lectura roma MVP" ON public.roma_maquinaria FOR SELECT USING (true);
-CREATE POLICY "Permitir lectura tratamientos MVP" ON public.tratamientos_fitosanitarios FOR SELECT USING (true);
-CREATE POLICY "Permitir insercion tratamientos MVP" ON public.tratamientos_fitosanitarios FOR INSERT WITH CHECK (true);
-CREATE POLICY "Permitir lectura users MVP" ON public.users FOR SELECT USING (true);
-CREATE POLICY "Permitir insercion users MVP" ON public.users FOR INSERT WITH CHECK (true);
+-- Limpiar políticas existentes si se ejecuta de nuevo
+DROP POLICY IF EXISTS "Permitir acceso farmers" ON public.farmers;
+DROP POLICY IF EXISTS "Permitir acceso users" ON public.users;
+DROP POLICY IF EXISTS "Permitir acceso explotaciones" ON public.explotaciones;
+DROP POLICY IF EXISTS "Permitir acceso parcelas" ON public.parcelas;
+DROP POLICY IF EXISTS "Permitir acceso ropo" ON public.ropo_trabajadores;
+DROP POLICY IF EXISTS "Permitir acceso roma" ON public.roma_maquinaria;
+DROP POLICY IF EXISTS "Permitir acceso tratamientos" ON public.tratamientos_fitosanitarios;
+DROP POLICY IF EXISTS "Permitir acceso fertilizaciones" ON public.fertilizaciones;
+DROP POLICY IF EXISTS "Permitir acceso riegos" ON public.riegos;
+DROP POLICY IF EXISTS "Permitir acceso config_database" ON public.config_database;
+DROP POLICY IF EXISTS "Permitir acceso config_api_endpoints" ON public.config_api_endpoints;
+DROP POLICY IF EXISTS "Permitir acceso sql_logs" ON public.sql_execution_logs;
+
+-- Políticas de lectura y escritura para la app
+CREATE POLICY "Permitir acceso farmers" ON public.farmers FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso users" ON public.users FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso explotaciones" ON public.explotaciones FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso parcelas" ON public.parcelas FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso ropo" ON public.ropo_trabajadores FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso roma" ON public.roma_maquinaria FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso tratamientos" ON public.tratamientos_fitosanitarios FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso fertilizaciones" ON public.fertilizaciones FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso riegos" ON public.riegos FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso config_database" ON public.config_database FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso config_api_endpoints" ON public.config_api_endpoints FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir acceso sql_logs" ON public.sql_execution_logs FOR ALL USING (true) WITH CHECK (true);
+
+-- Permisos explícitos para acceso vía Data API (anon/publishable & authenticated)
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 
 -- ============================================================================
 -- 5. DATOS DE PRUEBA (SEED MULTI-TENANT) PARA SUPABASE
@@ -291,7 +406,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Configuración de Conexión a Base de Datos
 INSERT INTO public.config_database (id, host, port, database_name, username, password_encrypted, ssl_enabled, max_connections, is_active)
 VALUES
-    ('c0000000-0000-0000-0000-000000000001', 'db.xeqnlmfyvijdgclfhzgf.supabase.co', 5432, 'postgres', 'postgres', 'enc_aes256_Gk8f93j2...', TRUE, 20, TRUE)
+    ('c0000000-0000-0000-0000-000000000001', 'db.xeqnlmfyvijdgclfhzgf.supabase.co', 5432, 'postgres', 'postgres', '••••••••••••••••', TRUE, 20, TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 -- Configuración de APIs Oficiales
@@ -300,4 +415,3 @@ VALUES
     ('SIGPAC_REST', 'Servicio WFS/REST SIGPAC MAPA', 'https://sigpac.mapa.gob.es/fega/servicios/rest/recintos', 'NONE', NULL, 'PRODUCTION', 8000, TRUE, '{"Accept": "application/json"}'),
     ('SIEX_REST', 'API Central SIEX - FEGA (Cuaderno Digital)', 'https://siex.mapa.gob.es/api/v1/cuaderno/sincronizar', 'BEARER_TOKEN', 'enc_siex_token_991823712', 'SANDBOX', 12000, TRUE, '{"Content-Type": "application/json", "X-Platform-ID": "CUE-SAAS-SPAIN"}')
 ON CONFLICT (service_id) DO NOTHING;
-

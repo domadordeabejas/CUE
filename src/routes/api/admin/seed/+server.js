@@ -13,7 +13,7 @@ export async function POST({ locals }) {
 	}
 
 	try {
-		const result = reseedDemoData(true);
+		const result = await reseedDemoData(true);
 		return json({
 			success: true,
 			message: 'Todos los datos de demostración han sido insertados y persistidos en la Base de Datos SQL correctamente.',

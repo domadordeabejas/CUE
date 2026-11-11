@@ -29,7 +29,7 @@ export async function POST({ request, locals }) {
 			body.farmer_id = locals.user.farmer_id;
 		}
 
-		const parcela = createParcela(body);
+		const parcela = await createParcela(body);
 		return json({
 			success: true,
 			message: `Parcela ${parcela.nombre_referencia} (${parcela.cultivo_actual}) registrada en el SIGPAC.`,
@@ -53,7 +53,7 @@ export async function PUT({ request, locals }) {
 			data.farmer_id = locals.user.farmer_id;
 		}
 
-		const updated = updateParcela(id, data);
+		const updated = await updateParcela(id, data);
 		return json({
 			success: true,
 			message: `Parcela ${updated.nombre_referencia} actualizada.`,
@@ -76,7 +76,7 @@ export async function DELETE({ url, locals }) {
 	if (!id || !farmerId) return json({ success: false, message: 'id y farmer_id requeridos' }, { status: 400 });
 
 	try {
-		const result = deleteParcela(id, farmerId);
+		const result = await deleteParcela(id, farmerId);
 		return json({ success: true, message: 'Parcela eliminada correctamente.', result });
 	} catch (err) {
 		return json({ success: false, message: err.message }, { status: 400 });

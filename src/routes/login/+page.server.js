@@ -4,10 +4,12 @@
  */
 
 import { authenticateUser, createSession } from '$lib/server/auth.js';
+import { syncFromSupabase } from '$lib/server/db.js';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const actions = {
 	default: async ({ request, cookies, url }) => {
+		await syncFromSupabase();
 		const data = await request.formData();
 		const email = data.get('email')?.toString().trim();
 		const password = data.get('password')?.toString();

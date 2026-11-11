@@ -17,7 +17,10 @@
 	let supabaseUrl = $state('https://xeqnlmfyvijdgclfhzgf.supabase.co');
 	let supabaseKey = $state('sb_publishable_Ppp5160TqdfVeWKEZ05W3A_LtduAkoK');
 	let isSupabaseTesting = $state(false);
+	let isSupabaseSyncing = $state(false);
 	let supabaseStatus = $state(null);
+	let supabaseHealth = $state(null);
+	let copiedSqlFeedback = $state(false);
 	let isSeeding = $state(false);
 	let seedStatus = $state(null);
 
@@ -69,37 +72,106 @@
 		}
 	});
 
-	// Probar conexión directa con Supabase API
+	// Probar conexión y comprobar tablas en Supabase
 	async function testSupabase() {
 		isSupabaseTesting = true;
 		supabaseStatus = null;
 		try {
-			const res = await fetch(`${supabaseUrl}/rest/v1/`, {
-				headers: {
-					'apikey': supabaseKey,
-					'Authorization': `Bearer ${supabaseKey}`
+			const res = await fetch('/api/admin/supabase-status');
+			const data = await res.json();
+			if (data.success) {
+				supabaseHealth = data;
+				if (data.tablesReady) {
+					supabaseStatus = {
+						success: true,
+						message: `¡Conexión y tablas verificadas! Las ${data.tablesTotal} tablas están creadas y listas en Supabase (${data.latencyMs} ms).`
+					};
+				} else {
+					supabaseStatus = {
+						success: false,
+						warning: true,
+						message: `Conectado a Supabase (${data.latencyMs} ms), pero faltan tablas (${data.tablesExisting}/${data.tablesTotal} creadas). Ejecuta el script SQL en el SQL Editor.`
+					};
 				}
-			});
-			if (res.ok || res.status === 200 || res.status === 404) {
-				supabaseStatus = {
-					success: true,
-					message: 'Conexión a Supabase REST API y Realtime WebSocket verificada con éxito.'
-				};
 			} else {
 				supabaseStatus = {
 					success: false,
-					message: `Respuesta de Supabase HTTP ${res.status}: ${res.statusText}`
+					message: data.message || 'Error al conectar con Supabase.'
 				};
 			}
 		} catch (err) {
 			supabaseStatus = {
 				success: false,
-				message: `Error al conectar con Supabase: ${err.message}`
+				message: `Error al comprobar Supabase: ${err.message}`
 			};
 		} finally {
 			isSupabaseTesting = false;
 		}
 	}
+
+	// Sincronizar y subir todos los datos a Supabase
+	async function syncSupabase() {
+		if (!confirm('¿Deseas sincronizar y subir todos los datos locales (agricultores, usuarios, parcelas, tratamientos) a Supabase?')) {
+			return;
+		}
+
+		isSupabaseSyncing = true;
+		supabaseStatus = null;
+		try {
+			const res = await fetch('/api/admin/supabase-sync', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' }
+			});
+			const data = await res.json();
+			if (data.success) {
+				supabaseStatus = {
+					success: true,
+					message: data.message || 'Sincronización completada con éxito.'
+				};
+				await testSupabase();
+			} else {
+				supabaseStatus = {
+					success: false,
+					message: data.message || 'Error durante la sincronización.'
+				};
+			}
+		} catch (err) {
+			supabaseStatus = {
+				success: false,
+				message: `Error de red al sincronizar: ${err.message}`
+			};
+		} finally {
+			isSupabaseSyncing = false;
+		}
+	}
+
+	// Copiar script SQL al portapapeles
+	async function copySupabaseSql() {
+		try {
+			let sqlToCopy = supabaseHealth?.sqlScript;
+			if (!sqlToCopy) {
+				const res = await fetch('/api/admin/supabase-status');
+				const data = await res.json();
+				sqlToCopy = data.sqlScript;
+				supabaseHealth = data;
+			}
+
+			if (sqlToCopy) {
+				await navigator.clipboard.writeText(sqlToCopy);
+				copiedSqlFeedback = true;
+				setTimeout(() => {
+					copiedSqlFeedback = false;
+				}, 3500);
+			}
+		} catch (err) {
+			console.error('Error copiando SQL al portapapeles:', err);
+		}
+	}
+
+	// Comprobar Supabase automáticamente al montar
+	$effect(() => {
+		testSupabase();
+	});
 
 	let isTesting = $state(false);
 	let isSaving = $state(false);
@@ -180,26 +252,52 @@
 	</div>
 
 	<div class="card-body p-4">
-		<!-- Panel de Supabase Cloud & Realtime -->
+		<!-- Panel de Supabase Cloud & Sincronización de Datos -->
 		<div class="p-3 mb-4 rounded border bg-light bg-opacity-75">
 			<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
 				<div class="d-flex align-items-center gap-2">
 					<span class="fs-4">⚡</span>
 					<div>
-						<h6 class="mb-0 fw-bold text-dark">Instancia Supabase PostgreSQL & Realtime</h6>
-						<small class="text-muted">Conexión en la nube con subscripciones WebSocket a cambios de la base de datos</small>
+						<h6 class="mb-0 fw-bold text-dark">Almacenamiento Cloud en Supabase PostgreSQL & Realtime</h6>
+						<small class="text-muted">Persistencia de datos en la nube y subscripciones WebSocket a cambios en tiempo real</small>
 					</div>
 				</div>
-				<span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
-					<i class="bi bi-broadcast me-1"></i> WebSockets Activo
-				</span>
+				<div class="d-flex align-items-center gap-2">
+					{#if supabaseHealth?.tablesReady}
+						<span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
+							<i class="bi bi-check-circle-fill me-1"></i> Tablas Listas ({supabaseHealth.tablesExisting}/{supabaseHealth.tablesTotal})
+						</span>
+					{:else if supabaseHealth?.connected}
+						<span class="badge bg-warning-subtle text-warning border border-warning-subtle px-2 py-1">
+							<i class="bi bi-exclamation-triangle-fill me-1"></i> Tablas Pendientes ({supabaseHealth?.tablesExisting || 0}/{supabaseHealth?.tablesTotal || 12})
+						</span>
+					{:else}
+						<span class="badge bg-secondary-subtle text-secondary border px-2 py-1">
+							<i class="bi bi-cloud-slash me-1"></i> Sin Conexión
+						</span>
+					{/if}
+				</div>
 			</div>
 
 			{#if supabaseStatus}
-				<div class="alert {supabaseStatus.success ? 'alert-success' : 'alert-danger'} alert-dismissible fade show d-flex align-items-center gap-2 py-2 small" role="alert">
-					<i class="bi {supabaseStatus.success ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} fs-5"></i>
+				<div class="alert {supabaseStatus.success ? 'alert-success' : (supabaseStatus.warning ? 'alert-warning' : 'alert-danger')} alert-dismissible fade show d-flex align-items-center gap-2 py-2 small" role="alert">
+					<i class="bi {supabaseStatus.success ? 'bi-check-circle-fill' : (supabaseStatus.warning ? 'bi-exclamation-circle-fill' : 'bi-exclamation-triangle-fill')} fs-5"></i>
 					<div class="flex-grow-1">{supabaseStatus.message}</div>
 					<button type="button" class="btn-close" aria-label="Cerrar" onclick={() => supabaseStatus = null}></button>
+				</div>
+			{/if}
+
+			{#if supabaseHealth && !supabaseHealth.tablesReady}
+				<div class="alert alert-info py-2 px-3 small mb-3 border-info">
+					<div class="fw-semibold mb-1">
+						<i class="bi bi-lightbulb-fill text-warning me-1"></i> ¿Cómo activar el almacenamiento de datos en Supabase?
+					</div>
+					<ol class="mb-2 ps-3">
+						<li>Haz clic en el botón <strong>"Copiar Script SQL para Supabase"</strong> para copiar todo el esquema DDL y datos de demostración.</li>
+						<li>Pulsa <strong>"Abrir SQL Editor de Supabase"</strong> para ir a la consola de tu proyecto Supabase.</li>
+						<li>Pega el código en el editor y pulsa <strong>"Run"</strong>.</li>
+						<li>Vuelve aquí y pulsa <strong>"Comprobar Tablas"</strong> para verificar que todo esté activo.</li>
+					</ol>
 				</div>
 			{/if}
 
@@ -225,22 +323,83 @@
 				</div>
 			</div>
 
+			<!-- Desglose de tablas en Supabase si está disponible -->
+			{#if supabaseHealth?.tables?.length}
+				<div class="mb-3 p-2 bg-white rounded border small">
+					<div class="d-flex justify-content-between align-items-center mb-2 px-1">
+						<span class="fw-semibold text-muted text-uppercase" style="font-size: 0.75rem;">
+							<i class="bi bi-table me-1"></i> Estado de Tablas en Supabase:
+						</span>
+						<span class="badge {supabaseHealth.tablesReady ? 'bg-success' : 'bg-secondary'}">
+							{supabaseHealth.tablesExisting} de {supabaseHealth.tablesTotal} creadas
+						</span>
+					</div>
+					<div class="d-flex flex-wrap gap-1">
+						{#each supabaseHealth.tables as table}
+							<span class="badge {table.exists ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-light text-muted border'} px-2 py-1">
+								{#if table.exists}
+									<i class="bi bi-check2"></i>
+								{:else}
+									<i class="bi bi-x"></i>
+								{/if}
+								{table.name}
+								{#if table.exists && table.count > 0}
+									<span class="ms-1 fw-bold">({table.count})</span>
+								{/if}
+							</span>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
 			<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top">
-				<small class="text-muted">
-					<i class="bi bi-info-circle me-1"></i> Sincronización instantánea activa para <code>tratamientos_fitosanitarios</code>
-				</small>
-				<button
-					type="button"
-					class="btn btn-sm btn-outline-success"
-					disabled={isSupabaseTesting}
-					onclick={testSupabase}
-				>
-					{#if isSupabaseTesting}
-						<span class="spinner-border spinner-border-sm me-1"></span> Verificando...
-					{:else}
-						<i class="bi bi-lightning-charge-fill"></i> Probar Conexión Supabase
-					{/if}
-				</button>
+				<div class="d-flex flex-wrap gap-2">
+					<button
+						type="button"
+						class="btn btn-sm {copiedSqlFeedback ? 'btn-success text-white' : 'btn-outline-primary'}"
+						onclick={copySupabaseSql}
+					>
+						{#if copiedSqlFeedback}
+							<i class="bi bi-check-lg me-1"></i> ¡Script SQL Copiado!
+						{:else}
+							<i class="bi bi-clipboard2-data me-1"></i> Copiar Script SQL para Supabase
+						{/if}
+					</button>
+					<a
+						href="https://supabase.com/dashboard/project/xeqnlmfyvijdgclfhzgf/sql"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="btn btn-sm btn-outline-secondary"
+					>
+						<i class="bi bi-box-arrow-up-right me-1"></i> Abrir SQL Editor de Supabase
+					</a>
+				</div>
+				<div class="d-flex flex-wrap gap-2">
+					<button
+						type="button"
+						class="btn btn-sm btn-outline-success"
+						disabled={isSupabaseTesting}
+						onclick={testSupabase}
+					>
+						{#if isSupabaseTesting}
+							<span class="spinner-border spinner-border-sm me-1"></span> Verificando...
+						{:else}
+							<i class="bi bi-lightning-charge-fill me-1"></i> Comprobar Tablas
+						{/if}
+					</button>
+					<button
+						type="button"
+						class="btn btn-sm btn-success text-white"
+						disabled={isSupabaseSyncing || !supabaseHealth?.connected}
+						onclick={syncSupabase}
+					>
+						{#if isSupabaseSyncing}
+							<span class="spinner-border spinner-border-sm me-1"></span> Sincronizando...
+						{:else}
+							<i class="bi bi-cloud-arrow-up-fill me-1"></i> Sincronizar y Subir Datos a Supabase
+						{/if}
+					</button>
+				</div>
 			</div>
 		</div>
 
